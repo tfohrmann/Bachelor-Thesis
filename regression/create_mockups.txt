@@ -1,0 +1,229 @@
+# Imports
+import numpy as np
+import random
+from scipy import optimize
+
+
+# Function definitions
+def C(n, E, c):
+    """Evaluates c(t) up until t=n"""
+    time = np.arange(n+1)
+    result = np.zeros(n+1)
+    z = np.empty((len(E), n+1)) #Stores all states individually
+    
+    for i in range(len(E)):
+        x = np.exp(-E[i] * time)
+        y = np.exp(-E[i] * time[::-1])
+        z[i,] = c[i] * (x + y)
+        result += z[i,]
+            
+    return result, z
+
+
+def cov(a, n):
+    """Create a mockup nxn covariance matrix w/ a correlation proportional to a
+       of the form {{a**0, a**1, a**2}, {a**1, a**0, a**1}, {a**2, a**1, a**0}}"""
+    x = np.eye(n)
+    for i in range(1,n):
+        x = x + a**i * np.eye(n,k=i)
+    tmp = np.flip(x,0)
+    tmp = np.flip(tmp,1)
+    
+    return x + tmp - np.eye(n)
+
+
+def add_noise(arr, a, sigma, incr):
+    """Add noise onto arr w/ correlation a and std. deviation sigma.
+       Will add increasing noise if incr==1."""
+    error = np.dot(cov(a, len(arr)),sigma * arr * np.random.randn(len(arr),)) #Const. signal/noise
+    
+    if(incr):
+        width = random.uniform(20,40)
+        factor = 1e1*np.exp(- (np.linspace(-len(arr)//2, T+2-len(arr)//2, num=T+3))**2/width**2)+1
+        return arr + error * factor, np.abs(error * factor)
+    else:
+        return arr + error, np.abs(error)
+      
+        
+def average(arr):
+    """Average arr by 'folding' it at x=len(arr)//2"""
+    avrg = (arr[:len(arr)//2] + arr[:len(arr)//2-1:-1])/2
+    
+    return avrg
+
+
+def m(arr, n):
+    """Estimate m_eff by approximating c(t) to be only the ground state"""
+    result = np.empty(n)
+    for i in range(n):
+        try:
+            result[i] = optimize.brenth(estimate, 1e-4, 8., args=(i, arr))
+        except:
+            result[i] = np.nan        
+    
+    return result
+
+
+def estimate(x, t, arr):
+    """Function whose root yields m_eff"""
+    T = len(arr)
+    a = np.cosh(x * (t - T + 1))
+    b = np.cosh(x * (t - T))
+    res = a/b - (np.roll(arr,-1)/arr)[:-1][t]
+
+    return res
+
+
+def error(arr, a, sigma):
+    """Bootstrap calculation of errors"""
+    B = 30
+    boot_sample_cn = np.zeros((B, len(arr)))
+    boot_sample_cna = np.zeros((B, len(arr)//2))
+    boot_sample_m = np.zeros((B, len(arr)//2-1))
+    bootstrap_means = np.zeros(len(arr)//2-1)
+    errors = np.zeros(len(arr)//2-1)
+    
+    cov_matrix = cov(a, len(arr))
+    
+    for i in range(B):
+        boot_sample_cn[i,] = arr + np.dot(cov_matrix, sigma * arr * np.random.randn(len(arr),))
+        boot_sample_cna[i,] = average(boot_sample_cn[i,])
+        boot_sample_m[i,] = m(boot_sample_cna[i,], len(arr)//2-1)
+        
+    for i in range(len(errors)):
+        bootstrap_means[i] = np.nanmean(boot_sample_m[:,i])
+        np.nan_to_num(bootstrap_means[i], copy=0) #Handle NaNs by replacing w/ the mean
+        errors[i] = np.sqrt(np.sum((boot_sample_m[:,i] - bootstrap_means[i])**2)/float(B-1))
+    
+    return errors
+
+    
+def generate(T, n_states):
+    """Generates a sample w/ T entries either plateau or faulty"""
+    incr = 0 #flag for increasing noise
+    if(random.uniform(1,0) < 0.01):
+        incr = 1 
+        
+    plateau = 1
+     
+    # Generate a set of energies E and factors c
+    E = np.zeros(n_states)
+    E[0] = random.uniform(3e-4,3e-3)
+    for i in range(1,n_states):
+        E[i] = E[i-1] + random.uniform(0.25,0.35)/int(i)
+
+    c = np.random.random_sample((n_states,))
+    np.sort(c)[::-1]
+        
+    # Generate 'correlation coefficient' a and 'std. deviation' sigma
+    a = random.uniform(0.5,0.9)
+    sigma = E[0] * 1e-3 + random.uniform(5e-7,5e-8)
+        
+    # Generate the samples
+    sample_c, states = C(T+2, E, c)
+    error_m = error(sample_c, a, sigma)
+    sample_cn, error_c = add_noise(sample_c, a, sigma, incr)
+    sample_cna = average(sample_cn)
+    sample_m = m(sample_cna, n_points)
+        
+    # Check for too many points without erros
+    if np.sum(np.isnan(error_m)) > 5:
+        plateau = 0
+        
+    # Find plateau
+    # Point at which the influence of the excited states is smaller than avg. error
+    start = -1
+    for i in range(n_points):
+        threshold = np.mean(error_c)
+        if all([np.abs(states[j,i]) < threshold for j in range(1,n_states)]):
+            start = i
+            break
+        
+        
+    # Look for plateau points starting from "start"        
+    # Ignore plots w/ too many NaNs
+    if np.sum(np.isnan(sample_m)) > 4:
+        plateau = 0    
+    
+    plateau_range = [0,1]
+    if plateau == 1:
+        plateau_range = [start,start]
+            
+        # backwards
+        i = 1
+        skips = 0
+        while start - i > 20:
+            if skips == 2:
+                break
+            elif np.abs(sample_m[start-i] - E[0]) < 1.2 * error_m[start-i]:
+                    plateau_range[0] = start - i
+                    i += 1
+            elif (np.abs(sample_m[start-i-1] - E[0]) < 1.2 * error_m[start-i-1] and
+                    np.abs(sample_m[start-i-2] - E[0]) < 1.2 * error_m[start-i-2] and
+                    np.abs(sample_m[start-i] - E[0] < 1.8 * error_m[start-i])):
+                    skips += 1
+                    i += 1
+            else:
+                break
+                
+        # forwards
+        i = 1
+        skips = 0
+        while start + i < 60:
+            if skips == 2:
+                break
+            elif np.abs(sample_m[start+i] - E[0]) < 1.2 * error_m[start+i]:
+                    plateau_range[1] = start + i
+                    i += 1
+            elif (np.abs(sample_m[start+i+1] - E[0]) < 1.2 * error_m[start+i+1] and 
+                    np.abs(sample_m[start+i+2] - E[0]) < 1.2 * error_m[start+i+2] and
+                    np.abs(sample_m[start+i] - E[0] < 1.8 * error_m[start+i])):
+                    i += 1
+            else:
+                break
+                   
+    # Ignore too small "plateaus"
+    if plateau_range[1] - plateau_range[0] < 4:
+        plateau = 0
+        
+    return sample_m, error_m, plateau, E[0], plateau_range
+    
+ 
+
+# Set general parameters
+n_points = 64
+n_states = 14
+
+T = 2 * n_points - 1
+
+n_train = int(3e3)
+n_val = int(5e2)
+n_test = 0 #int(1e2)
+
+
+
+# Create sets
+# Training set
+train_data = np.empty((n_train,n_points))
+train_errors = np.empty((n_train,n_points))
+train_labels = np.empty((n_train,), dtype=int)
+train_targets = np.empty((n_train,))
+train_plateaus = np.empty((n_train,2), dtype=int)
+
+for i in range(n_train):
+    part, part_err, train_labels[i], train_targets[i], train_plateaus[i,:] = generate(T,n_states)
+    train_data[i,] = np.reshape(part,(1,len(part)))
+    train_errors[i,] = np.reshape(part_err,(1,len(part)))
+
+    
+# Validation set
+val_data = np.empty((n_val,n_points))
+val_errors = np.empty((n_val,n_points))
+val_labels = np.empty((n_val,), dtype=int)
+val_targets = np.empty((n_val,))
+val_plateaus = np.empty((n_val,2), dtype=int)
+
+for i in range(n_val):
+    part, part_err, val_labels[i], val_targets[i], val_plateaus[i,:] = generate(T,n_states)
+    val_data[i,] = np.reshape(part,(1,len(part)))
+    val_errors[i,] = np.reshape(part_err,(1,len(part)))

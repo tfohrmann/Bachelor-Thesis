@@ -1,0 +1,36 @@
+import os, shutil
+import numpy as np
+import sys
+
+n_points = 64 #Number of points of used set
+
+data_dir = "path/{}".format(2*n_points) #Replace path!
+tmp = os.listdir(data_dir)
+number_files = len(tmp)
+fnames = ["{}.txt".format(i+1) for i in range(number_files)]
+
+test_data = np.empty((1,n_points))
+test_errors = np.empty((1,n_points))
+
+for fname in fnames:
+    data = np.genfromtxt(os.path.join(data_dir, fname), skip_header=1, missing_values="NA", filling_values=-0.001)
+    t = data[:,0]
+    m1 = data[:,1]
+    d1 = data[:,2]
+    m2 = data[:,3]
+    d2 = data[:,4]
+    
+    m1 = np.reshape(m1,(1,n_points))
+    d1 = np.reshape(d1,(1,n_points))
+    m2 = np.reshape(m2,(1,n_points))
+    d2 = np.reshape(d2,(1,n_points))
+    
+    test_data = np.concatenate((test_data, m1), axis=0)
+    test_errors = np.concatenate((test_errors, d1), axis=0)
+    test_data = np.concatenate((test_data, m2), axis=0)
+    test_errors = np.concatenate((test_errors, d2), axis=0)
+
+test_data = np.delete(test_data, 0, 0)
+test_errors = np.delete(test_errors, 0, 0)
+test_labels = np.loadtxt('test_labels.txt',dtype=int)
+print("loaded test set and labels")

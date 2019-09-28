@@ -1,0 +1,92 @@
+# Train a covnet directly on the test set:
+
+import os, shutil
+import numpy as np
+import sys
+
+n_points = 64 #Number of points of used set
+
+data_dir = "path/{}".format(2*n_points) #Replace path by directory!
+tmp = os.listdir(data_dir)
+number_files = len(tmp)
+fnames = ["{}.txt".format(i+1) for i in range(number_files)]
+
+train_data = np.empty((1,n_points))
+train_errors = np.empty((1,n_points))
+
+for fname in fnames:
+    data = np.genfromtxt(os.path.join(data_dir, fname), skip_header=1, missing_values="NA", filling_values=-0.001)
+    t = data[:,0]
+    m1 = data[:,1]
+    d1 = data[:,2]
+    m2 = data[:,3]
+    d2 = data[:,4]
+    
+    m1 = np.reshape(m1,(1,n_points))
+    d1 = np.reshape(d1,(1,n_points))
+    m2 = np.reshape(m2,(1,n_points))
+    d2 = np.reshape(d2,(1,n_points))
+    
+    train_data = np.concatenate((train_data, m1), axis=0)
+    train_errors = np.concatenate((train_errors, d1), axis=0)
+    train_data = np.concatenate((train_data, m2), axis=0)
+    train_errors = np.concatenate((train_errors, d2), axis=0)
+
+train_data = np.delete(train_data, 0, 0)
+train_errors = np.delete(train_errors, 0, 0)
+train_labels = np.loadtxt('test_labels.txt',dtype=int)
+print("loaded train set and labels")
+
+
+# Reshape data
+train_data = np.reshape(train_data, (len(train_data), len(train_data[0]), 1))
+train_errors = np.reshape(train_errors, (len(train_data), len(train_data[0]), 1))
+train_data = np.concatenate((train_data,train_errors), axis=2)
+train_data = np.nan_to_num(train_data, nan=-1e2)
+
+
+# Function for building the model
+from keras import models
+from keras import layers
+
+def build_model():
+    model = models.Sequential()
+    model.add(layers.Conv1D(32, 9, activation="relu", input_shape=(64,2)))
+    model.add(layers.MaxPooling1D(2))
+    model.add(layers.Dropout(0.2))
+    model.add(layers.Conv1D(32, 9, activation="relu"))
+    model.add(layers.Flatten())
+    #model.add(layers.GlobalMaxPooling1D())
+    model.add(layers.Dropout(0.2))
+    model.add(layers.Dense(32, activation="relu"))
+    model.add(layers.Dense(32, activation="relu"))
+    model.add(layers.Dense(1, activation="sigmoid"))
+
+    model.compile(optimizer="rmsprop", loss="binary_crossentropy", metrics=["accuracy"])
+    return model
+
+
+# Train the model using k-fold validation
+k = 4
+num_val_samples = len(train_data) // 4
+num_epochs = 30
+all_histories = []
+
+for i in range(k):
+    print("Processing fold No.{}".format(i+1))
+    val_data = train_data[i * num_val_samples:(i+1) * num_val_samples]
+    val_labels = train_labels[i * num_val_samples:(i+1) * num_val_samples]
+    
+    partial_train_data = np.concatenate([train_data[:i * num_val_samples],
+                                        train_data[(i+1) * num_val_samples:]],
+                                       axis=0)
+    partial_train_labels = np.concatenate([train_labels[:i * num_val_samples], 
+                                           train_labels[(i+1) * num_val_samples:]], 
+                                          axis=0)
+    
+    model = build_model()
+    history = model.fit(partial_train_data, partial_train_labels,
+             epochs= num_epochs, batch_size=1, verbose = 0)
+
+    history = history.history["acc"] #In this case we care about training accuracy
+    all_histories.append(history)

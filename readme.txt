@@ -1,0 +1,2 @@
+This repository contains the source code for my bachelor thesis. All code is given in .txt files b/c this is primarily intended as documentation. With a few changes (i.e. setting up the relevant paths) the code can be executed.
+I used Keras with Tensorflow as backend, which are needed for executing the code.

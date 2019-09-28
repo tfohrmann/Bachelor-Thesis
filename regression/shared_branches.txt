@@ -1,0 +1,94 @@
+# Train a model that shares information between "start" and "end" branches
+
+# Single out samples with plateaus
+deleted = 0
+for i, plateau in enumerate(train_labels):
+    if plateau == 0:
+        train_data = np.delete(train_data, i-deleted, 0)
+        train_errors = np.delete(train_errors, i-deleted, 0)
+        train_targets = np.delete(train_targets, i-deleted, 0)
+        train_labels = np.delete(train_labels, i-deleted, 0)
+        train_plateaus = np.delete(train_plateaus, i-deleted, 0)
+        deleted += 1
+
+train_data = np.reshape(train_data, (len(train_labels), n_points, 1))
+train_data = np.nan_to_num(train_data, nan=-1e2)
+train_errors = np.reshape(train_errors, (len(train_labels), n_points, 1))
+train_errors = np.nan_to_num(train_errors, nan=-1e2)
+
+train_data = np.concatenate((train_data,train_errors), axis=2)
+
+
+deleted = 0
+for i, plateau in enumerate(val_labels):
+    if plateau == 0:
+        val_data = np.delete(val_data, i-deleted, 0)
+        val_errors = np.delete(val_errors, i-deleted, 0)
+        val_targets = np.delete(val_targets, i-deleted, 0)
+        val_labels = np.delete(val_labels, i-deleted, 0)
+        val_plateaus = np.delete(val_plateaus, i-deleted, 0)
+        deleted += 1
+
+val_data = np.reshape(val_data, (len(val_labels), n_points, 1))
+val_data = np.nan_to_num(val_data, nan=1e-2)
+val_errors = np.reshape(val_errors, (len(val_labels), n_points, 1))
+val_errors = np.nan_to_num(val_errors, nan=-1e2)
+
+val_data = np.concatenate((val_data,val_errors), axis=2)
+
+
+deleted = 0
+for i, plateau in enumerate(test_labels):
+    if plateau == 0:
+        test_data = np.delete(test_data, i-deleted, 0)
+        test_errors = np.delete(test_errors, i-deleted, 0)
+        test_targets = np.delete(test_targets, i-deleted, 0)
+        test_labels = np.delete(test_labels, i-deleted, 0)
+        test_plateaus = np.delete(test_plateaus, i-deleted, 0)
+        deleted += 1
+
+test_data = np.reshape(test_data, (len(test_labels), n_points, 1))
+test_errors = np.reshape(test_errors, (len(test_labels), n_points, 1))
+test_data = np.concatenate((test_data,test_errors), axis=2)
+test_data = np.nan_to_num(test_data, nan=-1e2)
+
+
+# Model definition
+from keras import layers
+from keras import Input
+from keras.models import Model
+
+input_tensor = Input(shape=(64,2))
+x = layers.Conv1D(10, 9, activation="relu")(input_tensor)
+x = layers.Conv1D(10, 9, activation="relu")(x)
+x = layers.MaxPooling1D(2)(x)
+x = layers.Dropout(0.2)(x)
+x = layers.Conv1D(10, 9, activation="relu")(x)
+x = layers.Conv1D(10, 9, activation="relu")(x)
+x = layers.Flatten()(x)
+x = layers.Dropout(0.2)(x)
+
+y = layers.Conv1D(10, 9, activation="relu")(input_tensor)
+y = layers.Conv1D(10, 9, activation="relu")(y)
+y = layers.MaxPooling1D(2)(y)
+y = layers.Dropout(0.2)(y)
+y = layers.Conv1D(10, 9, activation="relu")(y)
+y = layers.Conv1D(10, 9, activation="relu")(y)
+y = layers.Flatten()(y)
+y = layers.Dropout(0.2)(y)
+
+z = layers.concatenate([x,y])
+z = layers.Dense(128, activation="relu")(z)
+z = layers.Dense(128, activation="relu")(z)
+
+start_prediction = layers.Dense(1, name="start")(z)
+end_prediction = layers.Dense(1, name="end")(z)
+
+model = Model(input_tensor, [start_prediction, end_prediction])
+
+
+model.compile(optimizer="rmsprop", loss={"start": "mse", "end": "mse"})
+
+history = model.fit(train_data, {"start": train_plateaus[:,0], "end": train_plateaus[:,1]}, 
+                    validation_data=(val_data, {"start": val_plateaus[:,0], "end": val_plateaus[:,1]}), 
+                    epochs=30, verbose=1)
